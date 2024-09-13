@@ -1,0 +1,32 @@
+target C {
+    platform: {
+      name: "rp2040",
+      board: "pololu_3pi_2040_robot"
+    },
+    single-threaded: true
+  }
+
+  import LED from "lib/LED.lf"
+
+  preamble {=
+    #include <hardware/gpio.h>
+    #include <stdio.h>
+    #include <pico/stdlib.h>
+  =}
+  
+  main reactor {
+    timer t1(0, 500 ms)
+    timer t2(250 ms, 500 ms)
+    led = new LED()
+  
+    reaction(t1) -> led.set{=
+      lf_set(led.set,true);
+    =}
+
+    reaction(t2) -> led.set{=
+      lf_set(led.set,false);
+    =}
+  }
+
+  //lfc src/ToolsLEDSolution.lf
+  //picotool load -x bin/ToolsLEDSolution.elf
