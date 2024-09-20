@@ -24,37 +24,45 @@ target C {
 
 import Accelerometer from "lib/IMU.lf"
 import Display from "lib/Display.lf"
+import tilt from"lib/tilt.lf"
 
 preamble {=
   #include <stdio.h>
   #include <math.h>
 =}
 
+
 main reactor {
   a = new Accelerometer()
   d = new Display()
+  tilt = new tilt()
   timer t(0, 250 msec)
 
   reaction(t) -> a.trigger {=
     lf_set(a.trigger, true);
   =}
 
-  reaction(a.x, a.y, a.z) -> d.line0, d.line1, d.line2 {=
+  reaction(a.x, a.y, a.z) -> tilt.x, tilt.y, tilt.z{=
+    lf_set(tilt.x, a.x->value);
+    lf_set(tilt.y, a.y->value);
+    lf_set(tilt.z, a.z->value);
+  =}
+
+  reaction(tilt.pitch, tilt.roll) -> d.line0, d.line1, d.line2 {=
     /// TODO: define max string size for line
     /// based on font you can have 4 or 8 lines
     static char buf0[17];
     static char buf1[17];
     static char buf2[17];
 
-    float pitch = -atan2(a.y->value , sqrt(a.z->value * a.z->value + a.x->value * a.x->value)) * 57.3;
-    float roll = -atan2((-a.x->value), sqrt(a.y->value * a.y->value + a.z->value * a.z->value)) * 57.3;
+    // float pitch = -atan2(a.y->value , sqrt(a.z->value * a.z->value + a.x->value * a.x->value)) * 57.3;
+    // float roll = -atan2((-a.x->value), sqrt(a.y->value * a.y->value + a.z->value * a.z->value)) * 57.3;
 
-    snprintf(buf0, 17, "pitch:%2.4f", roll);
-    snprintf(buf1, 17, "roll:%2.4f", pitch);
+    snprintf(buf0, 17, "pitch:%2.4f", tilt.pitch->value);
+    snprintf(buf1, 17, "roll:%2.4f", tilt.roll->value);
     // snprintf(buf2, 17, "z:%2.4f", a.z->value);
 
     lf_set(d.line0, buf0);
     lf_set(d.line1, buf1);
-    lf_set(d.line2, buf2);
   =}
 }
