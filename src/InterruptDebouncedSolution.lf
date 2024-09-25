@@ -26,15 +26,23 @@
   main reactor {
 
       d = new Display()
-      timer t(0, 250 ms)
-      state led_on: bool = false
+    //   timer t(0, 250 ms)
+    //   state led_on: bool = false
       physical action a;
       preamble{=
         static void* action = NULL;
         instant_t time=0;
+        instant_t phys_time=0;
         void button_callback()
         {
-            lf_schedule(action, 0);
+            instant_t cur_phys_time= lf_time_physical();
+            if ((cur_phys_time-phys_time)/1e9 >= 0.2)
+            {
+                lf_schedule(action, 0);
+                phys_time = lf_time_physical();
+            }
+            
+            
         }
       =}
       
@@ -45,6 +53,7 @@
         // gpio_set_irq_enabled_with_callback (uint gpio, uint32_t event_mask, bool enabled, gpio_irq_callback_t callback)
         gpio_set_irq_enabled_with_callback(button_pin, GPIO_IRQ_EDGE_FALL, true, &button_callback);
         time = lf_time_logical();
+        phys_time = lf_time_physical();
     =}
 
     reaction(a)-> d.line0{=
