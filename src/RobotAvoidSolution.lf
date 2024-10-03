@@ -1,186 +1,325 @@
 /**
+
  * Template for robot driving lab exercises. This template just periodically switches between a
+
  * STOPPED and a DRIVING mode, updating the LCD display on each change of mode.
+
  */
+
  target C {
+
     platform: {
+
       name: "rp2040",
+
       board: "pololu_3pi_2040_robot"
+
     },
+
     single-threaded: true
+
   }
+
   
+
   import Display from "lib/Display.lf"
+
   import Motors from "lib/Motors.lf"
+
   import GyroAngle from "lib/IMU.lf"
+
   import Encoders from "lib/Encoders.lf"
+
   import Bump from "lib/Bump.lf"
+
   
+
+  
+
   reactor Robot {
-    input drive: bool      // Toggle mode.
-    input turn: bool
+
+    input state_R: int      // Toggle mode.
+
     output notify: string  // Notify of mode change.
-    
+
+    Motor = new Motors()
+
+
+
     reaction(startup) -> notify {=
       lf_set(notify, "INIT");
     =}
+
   
+
     initial mode TURNING {
-    reaction(drive) -> reset(DRIVING), notify {=
-      if (drive->value) {
+
+    reaction(state_R) -> reset(DRIVING), reset(BUMP), notify, Motor.left_power, Motor.right_power {=
+    lf_set(Motor.left_power,0.1f);
+    lf_set(Motor.right_power,-0.1f);
+      if (state_R->value == 0) {
         lf_set_mode(DRIVING);
         lf_set(notify, "DRIVING");
       }
+      else if (state_R->value == 2) {
+        lf_set_mode(BUMP);
+        lf_set(notify, "BUMP");
+      }
+
+
     =}
+
   }
+
 
     mode DRIVING {
-        
-      reaction(turn)-> reset(TURNING), notify {=
-        if (turn->value) {
-          lf_set_mode(TURNING);
-          lf_set(notify, "TURNING");
-        }
+
+      reaction(state_R)-> reset(TURNING), reset(BUMP), notify, Motor.left_power, Motor.right_power {=
+    lf_set(Motor.left_power,0.2f);
+    lf_set(Motor.right_power,0.19f);
+      if (state_R->value == 1) {
+        lf_set_mode(TURNING);
+        lf_set(notify, "TURNING");
+      }
+
+      else if (state_R->value == 2) {
+        lf_set_mode(BUMP);
+        lf_set(notify, "BUMP");
+      }
+
+
+
       =}
+
     }
+
+    mode BUMP{
+    reaction(state_R)-> reset(TURNING), reset(DRIVING), notify, Motor.left_power, Motor.right_power {=
+    lf_set(Motor.left_power,-0.1f);
+    lf_set(Motor.right_power,-0.1f);
+    if (state_R->value == 0) {
+        lf_set_mode(DRIVING);
+        lf_set(notify, "DRIVING");
+      }
+    if (state_R->value == 1) {
+        lf_set_mode(TURNING);
+        lf_set(notify, "TURNING");
+      }
+
+    
+
+    =}
 
 
   }
+}
+
 
   reactor AngleToDistance {
+
     input angle: int32_t
+
     output distance: float
+
   
+
     reaction(angle) -> distance {=  
+
     float distance_change = angle->value * (3.175 * 3.1415926)/(360);
+
     lf_set(distance, distance_change);
+
     =}
+
 
   }
+
   
+
   
+
   main reactor {
+
     robot = new Robot()
+
     display = new Display()
-    motor = new Motors()
+
     gyro = new GyroAngle()
+
     encoder = new Encoders()
+
     bump = new Bump()
+
     robot.notify -> display.line0
+
     left_distance = new AngleToDistance()
+
     right_distance = new AngleToDistance()
+
     state previous_distance:float = 0.0
+
     state previous_angle: float = 0.0
-    
 
+    state current_angle: float = 0.0
 
-    reaction(startup) -> robot.drive, robot.turn{=
-      lf_set(robot.turn, false);
-      lf_set(robot.drive, true);
-    =}
+    state state_M: int = 0
+
+    state current_distance:float = 0.0
+
+    state store :float = 0.0
+
+    state bump_happen :bool = false
+
+    state bump_back: bool = true
+
 
     encoder.left -> left_distance.angle
+
     encoder.right -> right_distance.angle
 
-    timer t1(0, 100ms)
-    timer t2(0, 100ms)
+
+    timer t(0, 100ms)
+
   
-    reaction(t1) -> encoder.trigger, gyro.trigger, bump.calibrate {= 
+
+    reaction(t) -> encoder.trigger, gyro.trigger{= 
+
     lf_set(encoder.trigger, true); 
+
     lf_set(gyro.trigger, true);
-    lf_set(bump.calibrate, true);
+
     =}
 
-    reaction(t1, bump.right, bump.left, left_distance.distance,right_distance.distance,gyro.z) -> motor.right_power, motor.left_power,robot.drive,robot.turn
+
+    reaction(bump.left, bump.right) {=
+
+        self->state_M = 2;
+
+        self->bump_happen = true;
+
+    =}
+
+
+
+    reaction(left_distance.distance,right_distance.distance, gyro.z) -> robot.state_R
+
     {=
-        if(bump.right->value || bump.left->value)
+
+
+        if(self->state_M == 0){
+
+           lf_set(robot.state_R, self->state_M);
+
+           self->current_distance = (left_distance.distance->value + right_distance.distance->value)/2.0;
+
+           self->current_angle = gyro.z->value;
+
+           
+           if(self->current_distance - self->previous_distance >= 50)
+
+           {
+
+            self->state_M = 1;
+
+            self->previous_distance = self->current_distance;
+
+           }
+
+        }
+
+        else if(self->state_M == 1){
+
+           lf_set(robot.state_R, self->state_M);
+
+           self->current_angle = gyro.z->value;
+
+           if(self->bump_happen)
+
+           {
+
+              if(self->current_angle - self->previous_angle <= -180)
+
+              {
+
+                self->state_M = 0;
+
+                self->previous_angle = self->current_angle;
+
+                self->bump_happen = false;
+
+                self->bump_back = true;
+
+              }
+
+           }
+
+           else if(self->current_angle - self->previous_angle <= -90)
+
+           {
+
+              self->state_M = 0;
+
+              self->previous_angle = self->current_angle;
+
+           }
+
+        }
+
+        else
+
         {
-            lf_set(robot.drive, false);
-            lf_set(robot.turn, false);
-            lf_set(motor.left_power, -0.2f);
-            lf_set(motor.right_power, -0.2f);
-            if((left_distance.distance->value + right_distance.distance->value)/2 - self->previous_distance <= -10)
+            lf_set(robot.state_R, self->state_M);
+            if(self->bump_back)
             {
-            
-            lf_set(motor.left_power, 0.1f);
-            lf_set(motor.left_power, -0.1f);
-            self->previous_distance = (left_distance.distance->value + right_distance.distance->value)/2;
-            if(gyro.z->value - self->previous_angle <= -180.0)
+                self->store = self->current_distance - self->previous_distance;
+                self->bump_back = false;
+            }
+            self->current_distance = (left_distance.distance->value + right_distance.distance->value)/2.0;
+            if(self->current_distance - self->previous_distance <= self->store - 10)
+
             {
-                lf_set(robot.drive, true);
-                lf_set(robot.turn, false);
+
+                self->state_M = 1;
+
+                self->previous_distance = self->current_distance;
+
             }
-            }
 
-
-
-        }
-
-        
-    =}
-
-
-
-    reaction(t2, left_distance.distance,right_distance.distance) -> robot.drive, robot.turn, motor.left_power, motor.right_power
-    {=
-        if((left_distance.distance->value + right_distance.distance->value)/2 - self->previous_distance >= 50)
-        {
-            
-            lf_set(robot.drive, false);
-            lf_set(robot.turn, true);
-            self->previous_distance = (left_distance.distance->value + right_distance.distance->value)/2;
         }
 
     =}
 
-    
-    
-
-    reaction(t2,gyro.z) -> robot.drive, robot.turn, motor.left_power, motor.right_power
-    {=
-        if(gyro.z->value - self->previous_angle <= -90.0)
-        {
-            lf_set(robot.turn, false);
-            lf_set(robot.drive, true);
-            self->previous_angle = gyro.z->value;
-        }
-    =}
 
     reaction(left_distance.distance,right_distance.distance) -> display.line1 {=
+
         static char buf[17];
-        snprintf(buf, 17, "distance: %f", (left_distance.distance->value + right_distance.distance->value)/2 - self->previous_distance);
+
+        snprintf(buf, 17, "distance: %.2f", (left_distance.distance->value + right_distance.distance->value)/2 - self->previous_distance);
+
         lf_set(display.line1, buf);
+
     =}
+
 
     reaction(gyro.z) -> display.line2 {=
-        static char buf[17];
-        snprintf(buf, 17, "rotate: %f", gyro.z->value - self->previous_angle);
-        lf_set(display.line2, buf);
-    =}
 
-    reaction(bump.right, bump.left) -> display.line3 {=
-    static char buf[17];
-    snprintf(buf, 17, "bump %d, %d", bump.right->value, bump.left->value);
-    lf_set(display.line3, buf);
+        static char buf[17];
+
+        snprintf(buf, 17, "rotate: %.2f", self->current_angle - self->previous_angle);
+
+        lf_set(display.line2, buf);
+
     =}
 
     
 
+    reaction(left_distance.distance,right_distance.distance) -> display.line3 {=
 
+        static char buf[17];
 
-    reaction(robot.notify) -> motor.left_power, motor.right_power
-    {=
-    if(strcmp(robot.notify->value, "DRIVING") == 0 )
-    {
-        lf_set(motor.left_power, 0.18f);
-        lf_set(motor.right_power, 0.2f);
-    }
-    else if(strcmp(robot.notify->value, "TURNING") == 0)
-    {
-        lf_set(motor.left_power, 0.1f);
-        lf_set(motor.right_power, -0.1f);
-    }
-    =}
+        snprintf(buf, 17, "n: %.2f,p: %.2f", self->current_distance, self->previous_distance);
+
+        lf_set(display.line3, buf);
+
+        =}
   }
-
- 
