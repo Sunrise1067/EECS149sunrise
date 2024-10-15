@@ -19,6 +19,8 @@
   import Line from "lib/Line.lf"
   import Display from "lib/Display.lf"
   import Motors from "lib/Motors.lf"
+  import tilt from "lib/tilt.lf"
+  import Accelerometer from "lib/IMU.lf"
   
 
   reactor Robot {
@@ -26,84 +28,201 @@
     input line_R: uint16_t[5] 
     output notify: string
     Motor = new Motors()
+    tilt_1 = new tilt()
+    acceleration = new Accelerometer()
+    timer t_R(10s, 100ms)
+    state down:bool = false
+
+
+    reaction(t_R)-> acceleration.trigger
+    {=
+      lf_set(acceleration.trigger, true);
+    =}
+
+    acceleration.x -> tilt_1.x
+    acceleration.y -> tilt_1.y
+    acceleration.z -> tilt_1.z
 
 
 
   initial mode DRIVING{
-    reaction(line_R) -> reset(TURNLEFT), reset(TURNRIGHT), reset(STOP), notify, Motor.left_power, Motor.right_power {=
+    reaction(line_R,tilt_1.pitch, tilt_1.roll) -> reset(TURNLEFT), reset(TURNRIGHT), reset(BACK), reset(DOWN),notify, Motor.left_power, Motor.right_power {=
     lf_set(Motor.left_power,0.2f);
     lf_set(Motor.right_power,0.19f);
+    if(tilt_1.pitch->value <= 2 && tilt_1.roll->value <= 2)
+    {
+      lf_set_mode(DOWN);
+      lf_set(notify, "DOWN");
+    }
     if(line_R->value[4] >=800 && line_R->value[0] <=200)
     {
+        lf_set(Motor.left_power,-0.1f);
+        lf_set(Motor.right_power,0.13f);
         lf_set_mode(TURNLEFT);
         lf_set(notify, "TURNLEFT");
     }
     else if(line_R->value[2] >=800 && line_R->value[3] >=800)
     {
+        lf_set(Motor.left_power,-0.1f);
+        lf_set(Motor.right_power,0.13f);
         lf_set_mode(TURNLEFT);
         lf_set(notify, "TURNLEFT");
     }
     
     else if(line_R->value[0] >=800 && line_R->value[4] <=200)
     {
+        lf_set(Motor.left_power,0.13f);
+        lf_set(Motor.right_power,-0.1f);
         lf_set_mode(TURNRIGHT);
         lf_set(notify, "TURNRIGHT");
     }
     else if(line_R->value[1] >=800 && line_R->value[2] >=800)
     {
+        lf_set(Motor.left_power,0.13f);
+        lf_set(Motor.right_power,-0.1f);
         lf_set_mode(TURNRIGHT);
         lf_set(notify, "TURNRIGHT");
     }
 
-    // if(line_R->value[0] >= 800 && line_R->value[1] >= 800 && line_R->value[2] >= 800 && line_R->value[3] >= 800 && line_R->value[4] >= 800)
-    // {
-    //     lf_set_mode(STOP);
-    //     lf_set(notify, "STOP");
-    // }
+    if(line_R->value[0] >= 800 && line_R->value[1] >= 800 && line_R->value[2] >= 800 && line_R->value[3] >= 800 && line_R->value[4] >= 800)
+    {
+        lf_set_mode(BACK);
+        lf_set(notify, "BACK");
+        lf_set(Motor.left_power,-0.1f);
+        lf_set(Motor.right_power,-0.09f);
+    }
     =}
   }
 
-
-    mode TURNLEFT  {
-    reaction(line_R)-> reset(DRIVING), reset(TURNRIGHT), reset(STOP), notify, Motor.left_power, Motor.right_power {=
-        lf_set(Motor.left_power,-0.1f);
+  mode DOWN{
+    reaction(line_R,tilt_1.pitch, tilt_1.roll) -> reset(DRIVING),reset(TURNLEFT), reset(TURNRIGHT), reset(BACK), notify, Motor.left_power, Motor.right_power {=
+    lf_set(Motor.left_power,0.1f);
+    lf_set(Motor.right_power,0.09f);
+    self->down = true;
+    if(line_R->value[4] >=800 && line_R->value[0] <=200)
+    {
+        lf_set(Motor.left_power,-0.13f);
         lf_set(Motor.right_power,0.1f);
+        lf_set_mode(TURNLEFT);
+        lf_set(notify, "TURNLEFT");
+    }
+    else if(line_R->value[2] >=800 && line_R->value[3] >=800)
+    {
+        lf_set(Motor.left_power,-0.13f);
+        lf_set(Motor.right_power,0.1f);
+        lf_set_mode(TURNLEFT);
+        lf_set(notify, "TURNLEFT");
+    }
+    
+    else if(line_R->value[0] >=800 && line_R->value[4] <=200)
+    {
+        lf_set(Motor.left_power,0.1f);
+        lf_set(Motor.right_power,-0.13f);
+        lf_set_mode(TURNRIGHT);
+        lf_set(notify, "TURNRIGHT");
+    }
+    else if(line_R->value[1] >=800 && line_R->value[2] >=800)
+    {
+        lf_set(Motor.left_power,0.1f);
+        lf_set(Motor.right_power,-0.13f);
+        lf_set_mode(TURNRIGHT);
+        lf_set(notify, "TURNRIGHT");
+    }
+
+    if(line_R->value[0] >= 800 && line_R->value[1] >= 800 && line_R->value[2] >= 800 && line_R->value[3] >= 800 && line_R->value[4] >= 800)
+    {
+        lf_set_mode(BACK);
+        lf_set(notify, "BACK");
+        lf_set(Motor.left_power,-0.15f);
+        lf_set(Motor.right_power,-0.14f);
+    }
+    =}
+
+  }
+
+
+  mode TURNLEFT  {
+    reaction(line_R)-> reset(DRIVING), reset(TURNRIGHT), reset(BACK), reset(DOWN), notify, Motor.left_power, Motor.right_power {=
+      
       if (line_R->value[0] <= 200 && line_R->value[1] <= 200 && line_R->value[2] <= 200 && line_R->value[3] <= 200 && line_R->value[4] <= 200) {
-        lf_set_mode(DRIVING);
-        lf_set(notify, "DRIVING");
+        if(self->down)
+        {
+          self->down = false;
+          lf_set_mode(DOWN);
+          lf_set(notify, "DOWN");
+        }
+        else
+        {
+          lf_set_mode(DRIVING);
+          lf_set(notify, "DRIVING");
+        }
       }
 
-    //   if(line_R->value[0] >= 800 && line_R->value[1] >= 800 && line_R->value[2] >= 800 && line_R->value[3] >= 800 && line_R->value[4] >= 800)
-    // {
-    //     lf_set_mode(STOP);
-    //     lf_set(notify, "STOP");
-    // }
+      if(line_R->value[0] >= 800 && line_R->value[1] >= 800 && line_R->value[2] >= 800 && line_R->value[3] >= 800 && line_R->value[4] >= 800)
+    {
+        lf_set_mode(BACK);
+        lf_set(notify, "BACK");
+    }
       =}
     }
 
-    mode TURNRIGHT{
-        reaction(line_R)-> reset(DRIVING), reset(TURNLEFT), reset(STOP), notify, Motor.left_power, Motor.right_power {=
-        lf_set(Motor.left_power,0.1f);
-        lf_set(Motor.right_power,-0.1f);
+  mode TURNRIGHT{
+        reaction(line_R)-> reset(DRIVING), reset(TURNLEFT), reset(BACK), reset(DOWN), notify, Motor.left_power, Motor.right_power {=
       if (line_R->value[0] <= 200 && line_R->value[1] <= 200 && line_R->value[2] <= 200 && line_R->value[3] <= 200 && line_R->value[4] <= 200) {
-        lf_set_mode(DRIVING);
-        lf_set(notify, "DRIVING");
+        if(self->down)
+        {
+          self->down = false;
+          lf_set_mode(DOWN);
+          lf_set(notify, "DOWN");
+        }
+        else
+        {
+          lf_set_mode(DRIVING);
+          lf_set(notify, "DRIVING");
+        }
       }
 
-    //   if(line_R->value[0] >= 800 && line_R->value[1] >= 800 && line_R->value[2] >= 800 && line_R->value[3] >= 800 && line_R->value[4] >= 800)
-    // {
-    //     lf_set_mode(STOP);
-    //     lf_set(notify, "STOP");
-    // }
+      if(line_R->value[0] >= 800 && line_R->value[1] >= 800 && line_R->value[2] >= 800 && line_R->value[3] >= 800 && line_R->value[4] >= 800)
+    {
+        lf_set_mode(BACK);
+        lf_set(notify, "BACK");
+    }
         =}
     }
     
-    mode STOP{
-        reaction(line_R)-> reset(TURNLEFT), reset(DRIVING), notify, Motor.left_power, Motor.right_power {=
-        lf_set(Motor.left_power,0.0f);
-        lf_set(Motor.right_power,0.0f);
-        lf_set(notify, "STOP");
-        =}
+  mode BACK{
+        reaction(line_R,tilt_1.pitch, tilt_1.roll)-> reset(TURNLEFT), reset(DRIVING), reset(TURNRIGHT), reset(DOWN), notify, Motor.left_power, Motor.right_power {=
+        if(line_R->value[4] <= 200 && line_R->value[0] <= 200)
+        {
+            if(self->down)
+          {
+            if(tilt_1.roll->value < 0)
+            {
+              lf_set_mode(TURNLEFT);
+              lf_set(notify, "TURNLEFT");
+            }
+            else
+            {
+              lf_set_mode(TURNRIGHT);
+              lf_set(notify, "TURNRIGHT");
+            }
+          }
+          else
+          {
+              if(tilt_1.roll->value < 0)
+            {
+              lf_set_mode(TURNRIGHT);
+              lf_set(notify, "TURNRIGHT");
+            }
+            else
+            {
+              lf_set_mode(TURNLEFT);
+              lf_set(notify, "TURNLEFT");
+            }
+          }
+        }
+
+      =}
     }
 }
     
@@ -116,7 +235,6 @@
     line = new Line()
     disp = new Display()
     robot = new Robot()
-
   
     timer t(0, sample_period)
     timer seconds(0, 1 s)  // Timer used to display seconds.
@@ -146,9 +264,7 @@
     =}
 
     line.reflect -> robot.line_R;
-    // reaction(robot.notify) -> disp.line0{=
-    //     lf_set(disp.line0,robot.notify->);
-    // =}
+    
     robot.notify -> disp.line0
 
     reaction(line.reflect) -> disp.line1, disp.line2, disp.line3 {=
