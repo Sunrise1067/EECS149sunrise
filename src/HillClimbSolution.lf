@@ -39,6 +39,7 @@
     angle = new GyroAngle()
     timer t_R(0, 100ms)
     state pre_angle:float = 0.0
+    state counter:float = 0.0
 
     reaction(t_R)-> acceleration.trigger, angle.trigger, encoder.trigger
     {=
@@ -57,14 +58,14 @@
     {=
       lf_set(left_disp, encoder.left->value);
       lf_set(right_disp, encoder.right->value);
-      lf_set(P, tilt_1.pitch->value);
+      lf_set(P, self->counter);
       lf_set(R, tilt_1.roll->value);
       lf_set(A, angle.z->value - self->pre_angle);
     =}
 
   initial mode CALIBRATING
   {
-    reaction(tilt_1.pitch,tilt_1.roll,encoder.left,encoder.right) ->reset(UP), Motor.left_speed, Motor.right_speed, Motor.left, Motor.right, notify{=
+    reaction(angle.z,tilt_1.pitch,tilt_1.roll,encoder.left,encoder.right) ->reset(UP), Motor.left_speed, Motor.right_speed, Motor.left, Motor.right, notify{=
       lf_set(Motor.left, encoder.left->value);
       lf_set(Motor.right, encoder.right->value);
       lf_set(notify, "CALIBRATING");
@@ -83,39 +84,45 @@
       {
         lf_set(Motor.left_speed,0.0f);
         lf_set(Motor.right_speed,0.0f);
-        lf_set_mode(UP);
-        lf_set(notify, "UP");
+        self->counter++;
+        if(self->counter >= 10)
+        {
+          self->counter = 0;
+          self->pre_angle = angle.z->value;
+          lf_set_mode(UP);
+          lf_set(notify, "UP");
+        }
       }
     =}
   }
 
   mode UP{
-    reaction(angle.z,tilt_1.pitch,tilt_1.roll,encoder.left,encoder.right) -> reset(TURNING), Motor.left_speed, Motor.right_speed, Motor.left, Motor.right, notify{=
+    reaction(tilt_1.pitch,tilt_1.roll,encoder.left,encoder.right) -> reset(TURNING), Motor.left_speed, Motor.right_speed, Motor.left, Motor.right, notify{=
       lf_set(Motor.left, encoder.left->value);
       lf_set(Motor.right, encoder.right->value);
 
-      if(tilt_1.roll->value < -1)
+      if(tilt_1.roll->value < -0.5)
       {
-        lf_set(Motor.left_speed,0.21f);
-        lf_set(Motor.right_speed,0.2f);
+        lf_set(Motor.left_speed,0.195f);
+        lf_set(Motor.right_speed,0.24f);
       }
-      else if(tilt_1.roll->value > 1)
+      else if(tilt_1.roll->value > 0.5)
       {
-        lf_set(Motor.left_speed,0.2f);
-        lf_set(Motor.right_speed,0.21f);
+        lf_set(Motor.left_speed,0.235f);
+        lf_set(Motor.right_speed,0.2f);
       }
       else
       {
-        lf_set(Motor.left_speed,0.2f);
+        lf_set(Motor.left_speed,0.195f);
         lf_set(Motor.right_speed,0.2f);
       }
-      if(tilt_1.pitch->value < 1 && tilt_1.pitch->value > -1 && tilt_1.roll->value < 1 && tilt_1.roll->value > -1)
+      if(tilt_1.pitch->value < 10 && tilt_1.pitch->value > -10 && tilt_1.roll->value < 2 && tilt_1.roll->value > -2)
       {
         lf_set(Motor.left_speed,0.0f);
         lf_set(Motor.right_speed,0.0f);
         lf_set_mode(TURNING);
         lf_set(notify, "TURNING");
-        self->pre_angle = angle.z->value;
+        
       }
     =}
   }
@@ -124,17 +131,23 @@
     reaction(angle.z,encoder.left,encoder.right) -> reset(DOWN), Motor.left_speed, Motor.right_speed, Motor.left, Motor.right, notify{=
       lf_set(Motor.left, encoder.left->value);
       lf_set(Motor.right, encoder.right->value);
+      self->counter++;
+      if(self->counter>=10.0)
+      {
+        self->counter = 0;
+        lf_set(Motor.left_speed,0.15f);
+        lf_set(Motor.right_speed,-0.15f);
+      }
 
-      lf_set(Motor.left_speed,0.15f);
-      lf_set(Motor.right_speed,-0.15f);
-
-      while(angle.z->value - self->pre_angle <= -180)
+      if(angle.z->value - self->pre_angle <= -160)
       {
         lf_set(Motor.left_speed,0.0f);
         lf_set(Motor.right_speed,0.0f);
         lf_set_mode(DOWN);
         lf_set(notify, "DOWN");
         self->pre_angle = angle.z->value;
+        self->counter = 0;
+        
       }
     =}
   }
@@ -143,26 +156,29 @@
     reaction(tilt_1.pitch,tilt_1.roll,encoder.left,encoder.right) -> Motor.left_speed, Motor.right_speed, Motor.left, Motor.right, notify{=
       lf_set(Motor.left, encoder.left->value);
       lf_set(Motor.right, encoder.right->value);
-
-      if(tilt_1.roll->value < -1)
+      self->counter++;
+      if(self->counter>=10)
       {
-        lf_set(Motor.left_speed,0.1f);
-        lf_set(Motor.right_speed,0.09f);
-      }
-      else if(tilt_1.roll->value > 1)
-      {
-        lf_set(Motor.left_speed,0.09f);
-        lf_set(Motor.right_speed,0.1f);
-      }
-      else
-      {
-        lf_set(Motor.left_speed,0.1f);
-        lf_set(Motor.right_speed,0.1f);
-      }
-      if(tilt_1.pitch->value < 1 && tilt_1.pitch->value > -1 && tilt_1.roll->value < 1 && tilt_1.roll->value > -1)
-      {
-        lf_set(Motor.left_speed,0.0f);
-        lf_set(Motor.right_speed,0.0f);
+        if(tilt_1.roll->value < - 1)
+        {
+          lf_set(Motor.left_speed,0.195f);
+          lf_set(Motor.right_speed,0.145f);
+        }
+        else if(tilt_1.roll->value > 1)
+        {
+          lf_set(Motor.left_speed,0.155f);
+          lf_set(Motor.right_speed,0.185f);
+        }
+        else
+        {
+          lf_set(Motor.left_speed,0.155f);
+          lf_set(Motor.right_speed,0.145f);
+        }
+        // if(tilt_1.pitch->value < 2 && tilt_1.pitch->value > -2 && tilt_1.roll->value < 2 && tilt_1.roll->value > -2)
+        // {
+        //   lf_set(Motor.left_speed,0.0f);
+        //   lf_set(Motor.right_speed,0.0f);
+        // }
       }
     =}
   }
