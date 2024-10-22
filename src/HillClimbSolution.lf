@@ -20,25 +20,31 @@
   import MotorsWithFeedback from "lib/MotorsWithFeedback.lf"
   import tilt from "lib/tilt.lf"
   import Accelerometer from "lib/IMU.lf"
-  import Gyro from "lib/IMU.lf"
+  import GyroAngle from "lib/IMU.lf"
   import Encoders from "lib/Encoders.lf"
   
 
   reactor Robot {
     input state_R: int
-    input line_R: uint16_t[5] 
     output notify: string
-    motor = new MotorsWithFeedback()
+    output P:float
+    output R:float
+    output A:float
+    output left_disp:int32_t
+    output right_disp:int32_t
+    Motor = new MotorsWithFeedback()
     tilt_1 = new tilt()
     acceleration = new Accelerometer()
     encoder = new Encoders()
-    gyro = new Gyro()
+    angle = new GyroAngle()
     timer t_R(0, 100ms)
+    state pre_angle:float = 0.0
 
-
-    reaction(t_R)-> acceleration.trigger
+    reaction(t_R)-> acceleration.trigger, angle.trigger, encoder.trigger
     {=
       lf_set(acceleration.trigger, true);
+      lf_set(angle.trigger, true);
+      lf_set(encoder.trigger, true);
     =}
 
     acceleration.x -> tilt_1.x
@@ -47,69 +53,146 @@
 
 
 
+    reaction(tilt_1.pitch,tilt_1.roll,angle.z,encoder.left,encoder.right)-> P,R,A,left_disp,right_disp
+    {=
+      lf_set(left_disp, encoder.left->value);
+      lf_set(right_disp, encoder.right->value);
+      lf_set(P, tilt_1.pitch->value);
+      lf_set(R, tilt_1.roll->value);
+      lf_set(A, angle.z->value - self->pre_angle);
+    =}
+
   initial mode CALIBRATING
   {
-    
+    reaction(tilt_1.pitch,tilt_1.roll,encoder.left,encoder.right) ->reset(UP), Motor.left_speed, Motor.right_speed, Motor.left, Motor.right, notify{=
+      lf_set(Motor.left, encoder.left->value);
+      lf_set(Motor.right, encoder.right->value);
+      lf_set(notify, "CALIBRATING");
+
+      if(tilt_1.roll->value < -2)
+      {
+        lf_set(Motor.left_speed,-0.15f);
+        lf_set(Motor.right_speed,0.15f);
+      }
+      else if(tilt_1.roll->value > 2)
+      {
+        lf_set(Motor.left_speed,0.15f);
+        lf_set(Motor.right_speed,-0.15f);
+      }
+      else
+      {
+        lf_set(Motor.left_speed,0.0f);
+        lf_set(Motor.right_speed,0.0f);
+        lf_set_mode(UP);
+        lf_set(notify, "UP");
+      }
+    =}
   }
 
   mode UP{
-    reation(encoder.left,encoder.right)-> motor.left_speed, motor.right_speed, motor.left, motor.right{=
-        
+    reaction(angle.z,tilt_1.pitch,tilt_1.roll,encoder.left,encoder.right) -> reset(TURNING), Motor.left_speed, Motor.right_speed, Motor.left, Motor.right, notify{=
+      lf_set(Motor.left, encoder.left->value);
+      lf_set(Motor.right, encoder.right->value);
+
+      if(tilt_1.roll->value < -1)
+      {
+        lf_set(Motor.left_speed,0.21f);
+        lf_set(Motor.right_speed,0.2f);
+      }
+      else if(tilt_1.roll->value > 1)
+      {
+        lf_set(Motor.left_speed,0.2f);
+        lf_set(Motor.right_speed,0.21f);
+      }
+      else
+      {
+        lf_set(Motor.left_speed,0.2f);
+        lf_set(Motor.right_speed,0.2f);
+      }
+      if(tilt_1.pitch->value < 1 && tilt_1.pitch->value > -1 && tilt_1.roll->value < 1 && tilt_1.roll->value > -1)
+      {
+        lf_set(Motor.left_speed,0.0f);
+        lf_set(Motor.right_speed,0.0f);
+        lf_set_mode(TURNING);
+        lf_set(notify, "TURNING");
+        self->pre_angle = angle.z->value;
+      }
+    =}
+  }
+
+  mode TURNING{
+    reaction(angle.z,encoder.left,encoder.right) -> reset(DOWN), Motor.left_speed, Motor.right_speed, Motor.left, Motor.right, notify{=
+      lf_set(Motor.left, encoder.left->value);
+      lf_set(Motor.right, encoder.right->value);
+
+      lf_set(Motor.left_speed,0.15f);
+      lf_set(Motor.right_speed,-0.15f);
+
+      while(angle.z->value - self->pre_angle <= -180)
+      {
+        lf_set(Motor.left_speed,0.0f);
+        lf_set(Motor.right_speed,0.0f);
+        lf_set_mode(DOWN);
+        lf_set(notify, "DOWN");
+        self->pre_angle = angle.z->value;
+      }
+    =}
+  }
+
+  mode DOWN{
+    reaction(tilt_1.pitch,tilt_1.roll,encoder.left,encoder.right) -> Motor.left_speed, Motor.right_speed, Motor.left, Motor.right, notify{=
+      lf_set(Motor.left, encoder.left->value);
+      lf_set(Motor.right, encoder.right->value);
+
+      if(tilt_1.roll->value < -1)
+      {
+        lf_set(Motor.left_speed,0.1f);
+        lf_set(Motor.right_speed,0.09f);
+      }
+      else if(tilt_1.roll->value > 1)
+      {
+        lf_set(Motor.left_speed,0.09f);
+        lf_set(Motor.right_speed,0.1f);
+      }
+      else
+      {
+        lf_set(Motor.left_speed,0.1f);
+        lf_set(Motor.right_speed,0.1f);
+      }
+      if(tilt_1.pitch->value < 1 && tilt_1.pitch->value > -1 && tilt_1.roll->value < 1 && tilt_1.roll->value > -1)
+      {
+        lf_set(Motor.left_speed,0.0f);
+        lf_set(Motor.right_speed,0.0f);
+      }
     =}
   }
 }
     
-
-
-  
-
-  
-  main reactor(calibration_time: time = 10 s, sample_period: time = 100 ms) {
+  main reactor{
     disp = new Display()
     robot = new Robot()
-  
-    timer t(0, sample_period)
-    timer seconds(0, 1 s)  // Timer used to display seconds.
-    timer end_calibration(calibration_time)
-    state count: int = 0
-    state black: int = 800
-    state white: int = 200
 
-    reaction(startup) ->  disp.line1, disp.line2 {=
-    //   lf_set(disp.line0, "CALIBRATING");
-      lf_set(disp.line1, "Roll robot over");
-      lf_set(disp.line2, "light and dark.");
-    =}
-  
-    reaction(seconds) -> disp.line3 {=
-      static char buf[17];
-      snprintf(buf, 17, "time:%8d s", self->count++);
-      lf_set(disp.line3, buf);
-    =}
-  
-    reaction(end_calibration) -> line.calibrate {=
-      lf_set(line.calibrate, false);
-    =}
-  
-    reaction(t) -> line.trigger {=
-      lf_set(line.trigger, true);
-    =}
+    // reaction(startup) ->  disp.line1, disp.line2 {=
+    // //   lf_set(disp.line0, "CALIBRATING");
+    //   // lf_set(disp.line1, "Roll robot over");
+    //   // lf_set(disp.line2, "light and dark.");
+    // =}
 
-    line.reflect -> robot.line_R;
     
     robot.notify -> disp.line0
-
-    reaction(line.reflect) -> disp.line1, disp.line2, disp.line3 {=
+  
+    reaction(robot.P,robot.R,robot.A) -> disp.line1, disp.line2, disp.line3{=
     
-    static char buf0[17];
     static char buf1[17];
     static char buf2[17];
-    snprintf(buf0, 17, "0:%4d 1:%4d", line.reflect->value[0], line.reflect->value[1]);
-    snprintf(buf1, 17, "2:%4d 3:%4d", line.reflect->value[2], line.reflect->value[3]);
-    snprintf(buf2, 17, "4:%4d", line.reflect->value[4]);
-    lf_set(disp.line1, buf0);
-    lf_set(disp.line2, buf1);
-    lf_set(disp.line3, buf2);
+    static char buf3[17];
+
+    snprintf(buf1, 17, "pitch:%.3f", robot.P->value);
+    snprintf(buf2, 17, "roll:%.3f", robot.R->value);
+    snprintf(buf3, 17, "angle:%.3f", robot.A->value);
+    lf_set(disp.line1, buf1);
+    lf_set(disp.line2, buf2);
+    lf_set(disp.line3, buf3);
     =}
     
    }
