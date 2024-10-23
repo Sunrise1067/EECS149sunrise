@@ -135,11 +135,11 @@
       if(self->counter>=10.0)
       {
         self->counter = 0;
-        lf_set(Motor.left_speed,0.15f);
-        lf_set(Motor.right_speed,-0.15f);
+        lf_set(Motor.left_speed,-0.15f);
+        lf_set(Motor.right_speed,0.15f);
       }
 
-      if(angle.z->value - self->pre_angle <= -130)
+      if(angle.z->value - self->pre_angle >= 160)
       {
         lf_set(Motor.left_speed,0.0f);
         lf_set(Motor.right_speed,0.0f);
@@ -154,12 +154,12 @@
 
   mode DOWN{
     reaction(tilt_1.pitch,tilt_1.roll,encoder.left,encoder.right) -> Motor.left_speed, Motor.right_speed, Motor.left, Motor.right, notify{=
-      
+      lf_set(Motor.left, encoder.left->value);
+      lf_set(Motor.right, encoder.right->value);
       self->counter++;
       if(self->counter>=10)
       {
-        lf_set(Motor.left, encoder.left->value);
-        lf_set(Motor.right, encoder.right->value);
+        
         if(tilt_1.pitch->value < -4)
         {
           if(tilt_1.roll->value < - 1)
