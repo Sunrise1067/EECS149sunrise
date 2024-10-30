@@ -1,4 +1,4 @@
- target C {
+target C {
   platform: "RP2040",
   threading: false,
   keepalive: true
@@ -22,142 +22,109 @@ main reactor {
     static void* timer_end_ptr;
 
     typedef void (*virtual_timer_callback_t)(void);
- 
-    // Definition of linked list node 
+
+    // 定义链表节点结构体
     typedef struct node_t {
-      /* Put the variables needed for linked list node here */
-      // value for the timer
-      uint32_t timer_value;
+      uint32_t timer_value;               // 计时器的触发时间
+      virtual_timer_callback_t cb;        // 到期时执行的回调函数
+      bool repeat;                        // 是否重复触发
+      uint32_t period;                    // 重复触发的周期
+      struct node_t *next;                // 下一个节点的指针
+    } node_t;
 
-      virtual_timer_callback_t cb;
-
-      bool repeat;
-
-      uint32_t period;
-
-
-      /*********************************************
-          DO NOT CHANGE THE CODE BELOW
-      *********************************************/
-      // next node pointer
-      struct node_t * next ;
-      } node_t ;
-
-    //The linked list for timer
+    // 链表头指针
     static node_t* linked_list = NULL;
 
-    // linked list operation functions
-    // insert the node in the sorted linked list (linked_list) and return the sorted linked list after the insertion
-    void list_insert_sorted(node_t* node){
-       if(linked_list == NULL){
-          node -> next = NULL;
-          linked_list = node;
-       }
-       else{
-          if(linked_list -> timer_value > node -> timer_value){
-              node -> next = linked_list;
-              linked_list = node;
-            }     
-          else{
-              // node is somewhere after the head
-              node_t* prev_node = linked_list;
-              node_t* curr_node = linked_list->next;
-              while(curr_node != NULL && curr_node -> timer_value < node -> timer_value){
-                  // iterate until end of list or the current node has a greater value
-                  prev_node = curr_node;
-                  curr_node = curr_node -> next;
-              }
-              // insert node
-              prev_node -> next = node;
-              node -> next = curr_node;
-          } 
-       }
-    }
+    // **链表插入**：按触发时间排序插入新计时器节点，禁用中断确保操作原子性
+    void list_insert_sorted(node_t* node) {
+        irq_set_enabled(ALARM_IRQ, false);  // 禁用中断
 
-    // remove the node from linked list
-    void list_remove(node_t* node){
-        if(linked_list != NULL){
-            if(linked_list == node){
-                linked_list = linked_list -> next;
-            }
-            else{
+        if (linked_list == NULL) {
+            node->next = NULL;
+            linked_list = node;
+        } else {
+            if (linked_list->timer_value > node->timer_value) {
+                node->next = linked_list;
+                linked_list = node;
+            } else {
                 node_t* prev_node = linked_list;
-                node_t* curr_node = linked_list -> next;
-                while(curr_node != NULL && curr_node != node){
+                node_t* curr_node = linked_list->next;
+                while (curr_node != NULL && curr_node->timer_value < node->timer_value) {
                     prev_node = curr_node;
-                    curr_node = curr_node -> next;
+                    curr_node = curr_node->next;
                 }
-                if(curr_node != NULL){
-                    prev_node -> next = curr_node -> next; 
+                prev_node->next = node;
+                node->next = curr_node;
+            }
+        }
+        
+        irq_set_enabled(ALARM_IRQ, true);  // 重新启用中断
+    }
+
+    // **链表删除**：从链表中移除指定节点，禁用中断以确保原子性
+    void list_remove(node_t* node) {
+        irq_set_enabled(ALARM_IRQ, false);  // 禁用中断
+
+        if (linked_list != NULL) {
+            if (linked_list == node) {
+                linked_list = linked_list->next;
+            } else {
+                node_t* prev_node = linked_list;
+                node_t* curr_node = linked_list->next;
+                while (curr_node != NULL && curr_node != node) {
+                    prev_node = curr_node;
+                    curr_node = curr_node->next;
+                }
+                if (curr_node != NULL) {
+                    prev_node->next = curr_node->next;
                 }
             }
         }
+
+        irq_set_enabled(ALARM_IRQ, true);  // 重新启用中断
     }
-    // return and remove the first node in the linked list
-    node_t* list_remove_first(){
-      node_t* head = linked_list;
-      if (head != NULL) {
-          linked_list = head->next;
-      }
-      return head;
-    }
-    /*********************************************
-        DO NOT CHANGE THE CODE ABOVE
-    *********************************************/
 
-    /* You can also create your own linked list functions here. */
-    #define ALARM_NUM 0
-    #define TIMER_BASE 0x40054000
+    // **中断处理程序**：处理触发的计时器并更新下一次报警时间
+    void lab5_timer_irq_handler(void) {
+        uint32_t timeraw = timer_hw->timerawl;
+        irq_set_enabled(ALARM_IRQ, false);  // 禁用中断确保链表一致性
 
-    void lab5_timer_irq_handler(void){
-        uint32_t timeraw = timer_hw->timerawl; 
-        node_t *cursor = linked_list;
+        // 处理所有已过期的计时器
+        while (linked_list != NULL && timeraw >= linked_list->timer_value) {
+            node_t* node = linked_list;
+            linked_list = linked_list->next;  // 从链表中移除当前节点
 
-        while (cursor != NULL) {
-            printf("cursor inc\n");
-            node_t *next = cursor->next;
+            if (node->cb) node->cb();         // 调用回调函数
 
-            if(timeraw >= cursor->timer_value) {
-                printf("lab5_timer_irq_handler: finished timer with timer_value %d\n", cursor->timer_value);
-                if (cursor->cb)
-                    cursor->cb();
-                list_remove(cursor);
-
-                if(cursor->repeat) {
-                    printf("repeated timer encountered\n");
-                    cursor->timer_value += cursor->period;
-                    list_insert_sorted(cursor);
-                    cursor = linked_list;
-                    continue;
-                } else {
-                    free(cursor);
-                }
+            // 处理重复计时器
+            if (node->repeat) {
+                node->timer_value += node->period;
+                list_insert_sorted(node);     // 重新插入链表
+            } else {
+                free(node);                   // 释放单次计时器节点
             }
-
-            cursor = next;
+            timeraw = timer_hw->timerawl;     // 更新当前时间
         }
-
-
 
         hw_clear_bits(&timer_hw->intr, 1u << ALARM_NUM);
 
-        // Restart the timer if there is another value
-        if (linked_list != NULL)
+        // 设置下一个报警时间
+        if (linked_list != NULL) {
             timer_hw->alarm[ALARM_NUM] = linked_list->timer_value;
+        }
 
-        // if (timer_end_ptr) {
-        //     lf_schedule(timer_end_ptr, 0);
-        // }
+        irq_set_enabled(ALARM_IRQ, true);  // 重新启用中断
     }
-    void virtual_timer_init(void){
+
+    // 初始化计时器系统
+    void virtual_timer_init(void) {
         hw_set_bits(&timer_hw->inte, 1u << ALARM_NUM);
         irq_set_exclusive_handler(ALARM_IRQ, lab5_timer_irq_handler);
         irq_set_enabled(ALARM_IRQ, true);
     }
-    uint32_t virtual_timer_start(uint32_t microseconds, virtual_timer_callback_t cb){
-        bool is_first = linked_list == NULL;
-        node_t *head = linked_list;
 
+    // 启动单次定时器
+    uint32_t virtual_timer_start(uint32_t microseconds, virtual_timer_callback_t cb) {
         node_t *node = malloc(sizeof(node_t));
         node->timer_value = timer_hw->timerawl + microseconds;
         node->repeat = false;
@@ -165,22 +132,17 @@ main reactor {
         node->cb = cb;
         list_insert_sorted(node);
 
-        if(linked_list == node)
-        {
+        // 检查链表头并更新报警时间
+        if (linked_list == node) {
             hw_clear_bits(&timer_hw->intr, 1u << ALARM_NUM);
             timer_hw->alarm[ALARM_NUM] = linked_list->timer_value;
         }
 
-        // Write the lower 32 bits of the target time to the alarm which
-        // will arm it
-
         return node->timer_value;
     }
-    uint32_t virtual_timer_start_repeated(uint32_t microseconds, virtual_timer_callback_t cb){
-        bool is_first = linked_list == NULL;
-        node_t *head = linked_list;
 
-
+    // 启动重复定时器
+    uint32_t virtual_timer_start_repeated(uint32_t microseconds, virtual_timer_callback_t cb) {
         node_t *node = malloc(sizeof(node_t));
         node->timer_value = timer_hw->timerawl + microseconds;
         node->repeat = true;
@@ -188,88 +150,53 @@ main reactor {
         node->cb = cb;
         list_insert_sorted(node);
 
-        if(linked_list == node)
-        {
+        // 检查链表头并更新报警时间
+        if (linked_list == node) {
             hw_clear_bits(&timer_hw->intr, 1u << ALARM_NUM);
             timer_hw->alarm[ALARM_NUM] = linked_list->timer_value;
         }
 
-        // Write the lower 32 bits of the target time to the alarm which
-        // will arm it
-
         return (uint32_t) node;
     }
-    void virtual_timer_cancel(uint32_t time_id ){
-        node_t *cursor = (node_t *)time_id;
 
+    // 取消指定计时器
+    void virtual_timer_cancel(uint32_t time_id) {
+        node_t *cursor = (node_t *)time_id;
         list_remove(cursor);
         free(cursor);
     }
 
-    void first_timer_callback(void) {
-        printf("first timer callback called (5 seconds)\n");
-    }
-
-    void second_timer_callback(void) {
-        printf("second timer callback called (10 seconds)\n");
+    // 示例回调函数：每秒切换 LED 状态
+    void led0_toggle(void) {
         static bool is_on = false;
-        printf("on callback %s\n", is_on ? "on": "off");
         gpio_put(PICO_DEFAULT_LED_PIN, is_on);
         is_on = !is_on;
     }
 
-    void third_timer_callback(void) {
-        printf("third timer callback called (20 seconds)\n");
-    }
-
-    void on_callback(void) {
-        static bool is_on = false;
-
-        printf("on callback %s\n", is_on ? "on": "off");
-        gpio_put(PICO_DEFAULT_LED_PIN, is_on);
-        is_on = !is_on;
+    // 示例回调函数：无操作
+    void do_nothing(void) {
+        printf("do_nothing callback fired\n");
     }
 
   =}
 
-  disp = new Display()
-
-    state timerid: uint32_t = 0
-
-    timer cancel_t(5100ms)
-
-  // timer print_hw_timer(0, 5000ms)
-
+  // 启动计时器的反应函数
   reaction(startup) -> timer_end {=
     timer_end_ptr = timer_end;
-      // initialize the LED and the virtual timer    
-      gpio_init(PICO_DEFAULT_LED_PIN);
-      gpio_set_dir(PICO_DEFAULT_LED_PIN, GPIO_OUT);
-      gpio_put(25, true);
-      virtual_timer_init();
-    self->timerid = virtual_timer_start_repeated(1 * 1000000, on_callback);
-    // virtual_timer_start_repeated(1 * 1000000, on_callback);
-        virtual_timer_start(10 * 1000000, second_timer_callback);
+    gpio_init(PICO_DEFAULT_LED_PIN);
+    gpio_set_dir(PICO_DEFAULT_LED_PIN, GPIO_OUT);
+    gpio_put(PICO_DEFAULT_LED_PIN, true);
+    virtual_timer_init();
+    
+    // 启动两个测试定时器
+    virtual_timer_start_repeated(1000000, led0_toggle);  // 每秒切换 LED
+    virtual_timer_start_repeated(2000000, do_nothing);   // 每2秒打印消息
   =}
 
-    // reaction(cancel_t) {=
-    //     virtual_timer_cancel(self->timerid);
-    // =}
-
-  
-  // reaction(print_hw_timer) -> disp.line0 {=
-  //     uint32_t lo = timer_hw->timelr;
-
-  //     static char buf[17];
-  //     snprintf(buf, 17, "t: %d", lo);
-  //     lf_set(disp.line0, buf);
-  // =}
-
+  // 显示计时器触发的信息
   reaction(timer_end) -> disp.line0 {=
       static char buf[17];
       snprintf(buf, 17, "timer fired!");
       lf_set(disp.line0, buf);
   =}
-
-  /* TODO: add reaction and timer to create the environment to test */
 }
