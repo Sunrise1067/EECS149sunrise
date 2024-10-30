@@ -165,7 +165,7 @@ main reactor {
         node->cb = cb;
         list_insert_sorted(node);
 
-        if(link_list == node)
+        if(linked_list == node)
         {
             hw_clear_bits(&timer_hw->intr, 1u << ALARM_NUM);
             timer_hw->alarm[ALARM_NUM] = linked_list->timer_value;
@@ -188,7 +188,7 @@ main reactor {
         node->cb = cb;
         list_insert_sorted(node);
 
-        if(link_list == node)
+        if(linked_list == node)
         {
             hw_clear_bits(&timer_hw->intr, 1u << ALARM_NUM);
             timer_hw->alarm[ALARM_NUM] = linked_list->timer_value;
@@ -212,7 +212,10 @@ main reactor {
 
     void second_timer_callback(void) {
         printf("second timer callback called (10 seconds)\n");
-        gpio_put(PICO_DEFAULT_LED_PIN, true);
+        static bool is_on = false;
+        printf("on callback %s\n", is_on ? "on": "off");
+        gpio_put(PICO_DEFAULT_LED_PIN, is_on);
+        is_on = !is_on;
     }
 
     void third_timer_callback(void) {
@@ -245,6 +248,7 @@ main reactor {
       gpio_put(25, true);
       virtual_timer_init();
     self->timerid = virtual_timer_start_repeated(1 * 1000000, on_callback);
+    // virtual_timer_start_repeated(1 * 1000000, on_callback);
         virtual_timer_start(10 * 1000000, second_timer_callback);
   =}
 
