@@ -1,0 +1,197 @@
+target C {
+    platform: "RP2040",
+    threading: false,
+    keepalive: true
+  }
+  
+  preamble {=
+    #include <hardware/gpio.h>
+    #include <hardware/timer.h>
+    #include <hardware/irq.h>
+    #include <pico/stdlib.h>
+    #define ALARM_NUM 0
+    #define ALARM_IRQ 0
+  =}
+  
+  main reactor {
+      physical action timer_end
+  
+    preamble {=
+      static void* timer_end_ptr;
+  
+      typedef void (*virtual_timer_callback_t)(void);
+  
+      typedef struct node_t {
+        uint32_t timer_value;               
+        virtual_timer_callback_t cb;        
+        bool repeat;                       
+        uint32_t period;                    
+        struct node_t *next;                
+      } node_t;
+  
+
+      static node_t* linked_list = NULL;
+  
+      void list_insert_sorted(node_t* node) {
+          irq_set_enabled(ALARM_IRQ, false); 
+  
+          if (linked_list == NULL) {
+              node->next = NULL;
+              linked_list = node;
+          } else {
+              if (linked_list->timer_value > node->timer_value) {
+                  node->next = linked_list;
+                  linked_list = node;
+              } else {
+                  node_t* prev_node = linked_list;
+                  node_t* curr_node = linked_list->next;
+                  while (curr_node != NULL && curr_node->timer_value < node->timer_value) {
+                      prev_node = curr_node;
+                      curr_node = curr_node->next;
+                  }
+                  prev_node->next = node;
+                  node->next = curr_node;
+              }
+          }
+          
+          irq_set_enabled(ALARM_IRQ, true);  
+      }
+  
+ 
+      void list_remove(node_t* node) {
+          irq_set_enabled(ALARM_IRQ, false);  
+  
+          if (linked_list != NULL) {
+              if (linked_list == node) {
+                  linked_list = linked_list->next;
+              } else {
+                  node_t* prev_node = linked_list;
+                  node_t* curr_node = linked_list->next;
+                  while (curr_node != NULL && curr_node != node) {
+                      prev_node = curr_node;
+                      curr_node = curr_node->next;
+                  }
+                  if (curr_node != NULL) {
+                      prev_node->next = curr_node->next;
+                  }
+              }
+          }
+  
+          irq_set_enabled(ALARM_IRQ, true); 
+      }
+  
+ 
+      void lab5_timer_irq_handler(void) {
+          uint32_t timeraw = timer_hw->timerawl;
+          irq_set_enabled(ALARM_IRQ, false);  
+  
+
+          while (linked_list != NULL && timeraw >= linked_list->timer_value) {
+              node_t* node = linked_list;
+              linked_list = linked_list->next;  
+  
+              if (node->cb) node->cb();        
+  
+              if (node->repeat) {
+                  node->timer_value += node->period;
+                  list_insert_sorted(node);    
+              } else {
+                  free(node);                   
+              }
+              timeraw = timer_hw->timerawl;   
+          }
+  
+          hw_clear_bits(&timer_hw->intr, 1u << ALARM_NUM);
+  
+
+          if (linked_list != NULL) {
+              timer_hw->alarm[ALARM_NUM] = linked_list->timer_value;
+          }
+          else
+          {
+              hw_clear_bits(&timer_hw->inte, 1u << ALARM_NUM);
+          }
+  
+          irq_set_enabled(ALARM_IRQ, true);  
+      }
+  
+
+      void virtual_timer_init(void) {
+          hw_set_bits(&timer_hw->inte, 1u << ALARM_NUM);
+          irq_set_exclusive_handler(ALARM_IRQ, lab5_timer_irq_handler);
+          irq_set_enabled(ALARM_IRQ, true);
+      }
+  
+
+      uint32_t virtual_timer_start(uint32_t microseconds, virtual_timer_callback_t cb) {
+          node_t *node = malloc(sizeof(node_t));
+          node->timer_value = timer_hw->timerawl + microseconds;
+          node->repeat = false;
+          node->period = 0;
+          node->cb = cb;
+          list_insert_sorted(node);
+  
+
+          if (linked_list == node) {
+              hw_clear_bits(&timer_hw->intr, 1u << ALARM_NUM);
+              timer_hw->alarm[ALARM_NUM] = linked_list->timer_value;
+          }
+  
+          return node->timer_value;
+      }
+  
+
+      uint32_t virtual_timer_start_repeated(uint32_t microseconds, virtual_timer_callback_t cb) {
+          node_t *node = malloc(sizeof(node_t));
+          node->timer_value = timer_hw->timerawl + microseconds;
+          node->repeat = true;
+          node->period = microseconds;
+          node->cb = cb;
+          list_insert_sorted(node);
+  
+          if (linked_list == node) {
+              hw_clear_bits(&timer_hw->intr, 1u << ALARM_NUM);
+              timer_hw->alarm[ALARM_NUM] = linked_list->timer_value;
+          }
+  
+          return (uint32_t) node;
+      }
+  
+
+      void virtual_timer_cancel(uint32_t time_id) {
+          node_t *cursor = (node_t *)time_id;
+          list_remove(cursor);
+          free(cursor);
+          if (linked_list == NULL) {
+            hw_clear_bits(&timer_hw->inte, 1u << ALARM_NUM);
+          }
+      }
+  
+
+      void led0_toggle(void) {
+          static bool is_on = false;
+          gpio_put(PICO_DEFAULT_LED_PIN, is_on);
+          is_on = !is_on;
+      }
+  
+
+      void do_nothing(void) {
+          printf("do_nothing\n");
+      }
+  
+    =}
+  
+    reaction(startup) -> timer_end {=
+      timer_end_ptr = timer_end;
+      gpio_init(PICO_DEFAULT_LED_PIN);
+      gpio_set_dir(PICO_DEFAULT_LED_PIN, GPIO_OUT);
+      gpio_put(PICO_DEFAULT_LED_PIN, true);
+      virtual_timer_init();
+      
+
+      virtual_timer_start_repeated(1000000, led0_toggle);  
+      virtual_timer_start_repeated(2000000, do_nothing);   
+    =}
+  
+
+  }
