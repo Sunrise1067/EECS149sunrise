@@ -49,6 +49,7 @@ main reactor {
     // linked list operation functions
     // insert the node in the sorted linked list (linked_list) and return the sorted linked list after the insertion
     void list_insert_sorted(node_t* node){
+
        if(linked_list == NULL){
           node -> next = NULL;
           linked_list = node;
@@ -110,6 +111,7 @@ main reactor {
     #define TIMER_BASE 0x40054000
 
     void lab5_timer_irq_handler(void){
+        irq_set_enabled(ALARM_IRQ, false);  // Interrupt false
         uint32_t timeraw = timer_hw->timerawl; 
         node_t *cursor = linked_list;
 
@@ -144,10 +146,9 @@ main reactor {
         // Restart the timer if there is another value
         if (linked_list != NULL)
             timer_hw->alarm[ALARM_NUM] = linked_list->timer_value;
+        
+        irq_set_enabled(ALARM_IRQ, true);  // Interrupt true
 
-        // if (timer_end_ptr) {
-        //     lf_schedule(timer_end_ptr, 0);
-        // }
     }
     void virtual_timer_init(void){
         hw_set_bits(&timer_hw->inte, 1u << ALARM_NUM);
@@ -165,7 +166,11 @@ main reactor {
         node->cb = cb;
         list_insert_sorted(node);
 
-        timer_hw->alarm[ALARM_NUM] = linked_list->timer_value;
+        if(linked_list == node)
+        {
+            hw_clear_bits(&timer_hw->intr, 1u << ALARM_NUM);
+            timer_hw->alarm[ALARM_NUM] = linked_list->timer_value;
+        }
 
         // Write the lower 32 bits of the target time to the alarm which
         // will arm it
@@ -184,7 +189,11 @@ main reactor {
         node->cb = cb;
         list_insert_sorted(node);
 
-        timer_hw->alarm[ALARM_NUM] = linked_list->timer_value;
+        if(linked_list == node)
+        {
+            hw_clear_bits(&timer_hw->intr, 1u << ALARM_NUM);
+            timer_hw->alarm[ALARM_NUM] = linked_list->timer_value;
+        }
 
         // Write the lower 32 bits of the target time to the alarm which
         // will arm it
@@ -196,19 +205,21 @@ main reactor {
 
         list_remove(cursor);
         free(cursor);
+
+        if (linked_list == NULL) {
+            hw_clear_bits(&timer_hw->inte, 1u << ALARM_NUM);
+            timer_hw -> alarm[ALARM_NUM] = UINT32_MAX;
+          }
     }
 
     void first_timer_callback(void) {
         printf("first timer callback called (5 seconds)\n");
+        gpio_put(PICO_DEFAULT_LED_PIN, false);
     }
 
     void second_timer_callback(void) {
         printf("second timer callback called (10 seconds)\n");
         gpio_put(PICO_DEFAULT_LED_PIN, true);
-    }
-
-    void third_timer_callback(void) {
-        printf("third timer callback called (20 seconds)\n");
     }
 
     void on_callback(void) {
@@ -219,9 +230,20 @@ main reactor {
         is_on = !is_on;
     }
 
+//9.2.8
+    // void led0_toggle(void) {
+    //       static bool is_on = false;
+    //       gpio_put(PICO_DEFAULT_LED_PIN, is_on);
+    //       is_on = !is_on;
+    //   }
+  
+    //   void do_nothing(void) {
+    //       printf("do_nothing callback fired\n");
+    //   }
+  
+
   =}
 
-  disp = new Display()
 
     state timerid: uint32_t = 0
 
@@ -236,10 +258,24 @@ main reactor {
       gpio_set_dir(PICO_DEFAULT_LED_PIN, GPIO_OUT);
       gpio_put(25, true);
       virtual_timer_init();
+
+    //   9.2.6
     self->timerid = virtual_timer_start_repeated(1 * 1000000, on_callback);
-        // virtual_timer_start(10 * 1000000, second_timer_callback);
+
+
+        // 9.2.7
+        // virtual_timer_start(1 * 1000000, first_timer_callback);
+        // virtual_timer_start(2 * 1000000, second_timer_callback);
+        // virtual_timer_start(3 * 1000000, first_timer_callback);
+        // virtual_timer_start(4 * 1000000, second_timer_callback);
+        // virtual_timer_start(5 * 1000000, first_timer_callback);
+        // virtual_timer_start(6 * 1000000, second_timer_callback);
+
+
+        
   =}
 
+    //9.2.6
     reaction(cancel_t) {=
         virtual_timer_cancel(self->timerid);
     =}
@@ -253,11 +289,6 @@ main reactor {
   //     lf_set(disp.line0, buf);
   // =}
 
-  reaction(timer_end) -> disp.line0 {=
-      static char buf[17];
-      snprintf(buf, 17, "timer fired!");
-      lf_set(disp.line0, buf);
-  =}
 
   /* TODO: add reaction and timer to create the environment to test */
 }
