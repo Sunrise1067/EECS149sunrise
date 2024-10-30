@@ -1,0 +1,248 @@
+target C {
+  platform: "RP2040",
+  threading: false,
+  keepalive: true
+}
+
+import Display from "lib/Display.lf" 
+
+preamble {=
+  #include <hardware/gpio.h>
+  #include <hardware/timer.h>
+  #include <hardware/irq.h>
+  #include <pico/stdlib.h>
+  #define ALARM_NUM_0 0  // 修改1: 定义不同的报警编号
+  #define ALARM_NUM_1 1  // 新增报警编号1，用于第二个定时任务
+  #define ALARM_IRQ_0 0
+  #define ALARM_IRQ_1 1  // 修改2: 设置第二个报警通道的中断编号
+=}
+
+main reactor {
+    physical action timer_end
+
+  preamble {=
+    static void* timer_end_ptr;
+
+    typedef void (*virtual_timer_callback_t)(void);
+ 
+    // Definition of linked list node 
+    typedef struct node_t {
+      /* Put the variables needed for linked list node here */
+      // value for the timer
+      uint32_t timer_value;
+
+      virtual_timer_callback_t cb;
+
+      bool repeat;
+
+      uint32_t period;
+
+      // next node pointer
+      struct node_t * next ;
+      } node_t ;
+
+    //The linked list for timer
+    static node_t* linked_list_0 = NULL;  // 修改3: 使用两个不同的链表来管理报警
+    static node_t* linked_list_1 = NULL;
+
+    // linked list operation functions (为每个链表定义)
+    void list_insert_sorted(node_t** linked_list, node_t* node){
+       if(*linked_list == NULL){
+          node -> next = NULL;
+          *linked_list = node;
+       }
+       else{
+          if((*linked_list) -> timer_value > node -> timer_value){
+              node -> next = *linked_list;
+              *linked_list = node;
+            }     
+          else{
+              // node is somewhere after the head
+              node_t* prev_node = *linked_list;
+              node_t* curr_node = (*linked_list)->next;
+              while(curr_node != NULL && curr_node -> timer_value < node -> timer_value){
+                  prev_node = curr_node;
+                  curr_node = curr_node -> next;
+              }
+              // insert node
+              prev_node -> next = node;
+              node -> next = curr_node;
+          } 
+       }
+    }
+
+    void list_remove(node_t** linked_list, node_t* node){
+        if(*linked_list != NULL){
+            if(*linked_list == node){
+                *linked_list = (*linked_list) -> next;
+            }
+            else{
+                node_t* prev_node = *linked_list;
+                node_t* curr_node = (*linked_list) -> next;
+                while(curr_node != NULL && curr_node != node){
+                    prev_node = curr_node;
+                    curr_node = curr_node -> next;
+                }
+                if(curr_node != NULL){
+                    prev_node -> next = curr_node -> next; 
+                }
+            }
+        }
+    }
+
+    node_t* list_remove_first(node_t** linked_list){
+      node_t* head = *linked_list;
+      if (head != NULL) {
+          *linked_list = head->next;
+      }
+      return head;
+    }
+
+    /* Timer IRQ Handlers for two alarms */
+    void lab5_timer_irq_handler_0(void){  // 修改4: 为每个报警通道定义单独的中断处理
+        uint32_t timeraw = timer_hw->timerawl; 
+        node_t *cursor = linked_list_0;
+
+        while (cursor != NULL) {
+            node_t *next = cursor->next;
+
+            if(timeraw >= cursor->timer_value) {
+                if (cursor->cb)
+                    cursor->cb();
+                list_remove(&linked_list_0, cursor);
+
+                if(cursor->repeat) {
+                    cursor->timer_value += cursor->period;
+                    list_insert_sorted(&linked_list_0, cursor);
+                    cursor = linked_list_0;
+                    continue;
+                } else {
+                    free(cursor);
+                }
+            }
+
+            cursor = next;
+        }
+
+        hw_clear_bits(&timer_hw->intr, 1u << ALARM_NUM_0);
+
+        if (linked_list_0 != NULL)
+            timer_hw->alarm[ALARM_NUM_0] = linked_list_0->timer_value;
+    }
+
+    void lab5_timer_irq_handler_1(void){  // 新增5: 第二报警通道的中断处理
+        uint32_t timeraw = timer_hw->timerawl; 
+        node_t *cursor = linked_list_1;
+
+        while (cursor != NULL) {
+            node_t *next = cursor->next;
+
+            if(timeraw >= cursor->timer_value) {
+                if (cursor->cb)
+                    cursor->cb();
+                list_remove(&linked_list_1, cursor);
+
+                if(cursor->repeat) {
+                    cursor->timer_value += cursor->period;
+                    list_insert_sorted(&linked_list_1, cursor);
+                    cursor = linked_list_1;
+                    continue;
+                } else {
+                    free(cursor);
+                }
+            }
+
+            cursor = next;
+        }
+
+        hw_clear_bits(&timer_hw->intr, 1u << ALARM_NUM_1);
+
+        if (linked_list_1 != NULL)
+            timer_hw->alarm[ALARM_NUM_1] = linked_list_1->timer_value;
+    }
+
+    void virtual_timer_init(void){
+        hw_set_bits(&timer_hw->inte, 1u << ALARM_NUM_0);
+        irq_set_exclusive_handler(ALARM_IRQ_0, lab5_timer_irq_handler_0);
+        irq_set_enabled(ALARM_IRQ_0, true);
+
+        hw_set_bits(&timer_hw->inte, 1u << ALARM_NUM_1);  // 修改6: 初始化第二个报警
+        irq_set_exclusive_handler(ALARM_IRQ_1, lab5_timer_irq_handler_1);
+        irq_set_enabled(ALARM_IRQ_1, true);
+    }
+
+    uint32_t virtual_timer_start(uint32_t microseconds, virtual_timer_callback_t cb){
+        node_t *node = malloc(sizeof(node_t));
+        node->timer_value = timer_hw->timerawl + microseconds;
+        node->repeat = false;
+        node->period = 0;
+        node->cb = cb;
+        list_insert_sorted(&linked_list_0, node);
+
+        timer_hw->alarm[ALARM_NUM_0] = linked_list_0->timer_value;
+        return node->timer_value;
+    }
+
+    uint32_t virtual_timer_start_repeated(uint32_t microseconds, virtual_timer_callback_t cb){
+        node_t *node = malloc(sizeof(node_t));
+        node->timer_value = timer_hw->timerawl + microseconds;
+        node->repeat = true;
+        node->period = microseconds;
+        node->cb = cb;
+        list_insert_sorted(&linked_list_1, node);  // 修改7: 重复任务使用第二个报警的链表
+
+        timer_hw->alarm[ALARM_NUM_1] = linked_list_1->timer_value;
+        return (uint32_t) node;
+    }
+
+    void virtual_timer_cancel(uint32_t time_id ){
+        node_t *cursor = (node_t *)time_id;
+
+        list_remove(&linked_list_0, cursor);
+        list_remove(&linked_list_1, cursor);  // 修改8: 取消定时器时同时检查两个链表
+        free(cursor);
+    }
+
+    void first_timer_callback(void) {
+        printf("first timer callback called (5 seconds)\n");
+    }
+
+    void second_timer_callback(void) {
+        printf("second timer callback called (10 seconds)\n");
+        gpio_put(PICO_DEFAULT_LED_PIN, true);
+    }
+
+    void on_callback(void) {
+        static bool is_on = false;
+        printf("on callback %s\n", is_on ? "on": "off");
+        gpio_put(PICO_DEFAULT_LED_PIN, is_on);
+        is_on = !is_on;
+    }
+  =}
+
+  disp = new Display()
+
+    state timerid: uint32_t = 0
+
+    timer cancel_t(5100ms)
+
+  reaction(startup) -> timer_end {=
+    timer_end_ptr = timer_end;
+    gpio_init(PICO_DEFAULT_LED_PIN);
+    gpio_set_dir(PICO_DEFAULT_LED_PIN, GPIO_OUT);
+    gpio_put(25, true);
+    virtual_timer_init();
+    self->timerid = virtual_timer_start_repeated(1 * 1000000, on_callback);  // 修改9: 使用第二报警的重复任务
+    virtual_timer_start(10 * 1000000, second_timer_callback);
+  =}
+
+    reaction(cancel_t) {=
+        virtual_timer_cancel(self->timerid);
+    =}
+
+  reaction(timer_end) -> disp.line0 {=
+      static char buf[17];
+      snprintf(buf, 17, "timer fired!");
+      lf_set(disp.line0, buf);
+  =}
+}
