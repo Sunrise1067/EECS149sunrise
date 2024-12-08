@@ -1,0 +1,285 @@
+target C {
+    platform: {
+      name: "rp2040",
+      board: "pololu_3pi_2040_robot"
+    },
+    single-threaded: true
+  }
+
+import Display from "lib/Display.lf"
+import MotorsWithFeedback from "lib/MotorsWithFeedback.lf"
+import Encoders from "lib/Encoders.lf"
+import GyroAngle from "lib/IMU.lf"
+
+preamble {=
+    #include <stdio.h>
+    #include <pico/stdlib.h>
+=}
+
+reactor AngleToDistance{
+    input right_angle: int32_t
+    input left_angle: int32_t
+
+    output right_distance: float
+    output left_distance: float
+
+    reaction(right_angle) -> right_distance{=
+      lf_set(right_distance, right_angle->value*3.14159/180.0*3.175/2.0);
+    =}
+
+    reaction(left_angle) -> left_distance{=
+      lf_set(left_distance, left_angle->value*3.14159/180.0*3.175/2.0);
+    =}
+}
+
+reactor Robot {
+  input drive_mode: char      // Toggle mode.
+  input drive_distance: float
+  input uid:int32_t
+  output notify: string  // Notify of mode change.   
+  output left_disp: int32_t // Left encoder value
+  output right_disp: int32_t // Right encoder value
+  output out_angle: float
+  state D: float = 0.0
+  state D_prev: float = 0.0
+  state A: float = 0.0
+  state A_prev: float = 0.0
+  state current_uid:int32_t = 1
+  Motor = new MotorsWithFeedback()
+  encoder = new Encoders()
+  gyro = new GyroAngle()
+  distance = new AngleToDistance()
+
+  timer t_R(0, 10ms)
+
+  reaction(startup) -> notify {=
+      lf_set(notify, "INIT");
+  =}
+
+  reaction(t_R)-> encoder.trigger, gyro.trigger, out_angle{=
+      lf_set(encoder.trigger, true);
+      lf_set(gyro.trigger, true);
+      lf_set(out_angle, self->A - self->A_prev);
+  =}
+
+
+  reaction(encoder.left, encoder.right) -> left_disp, right_disp, distance.right_angle, distance.left_angle {=
+      lf_set(left_disp, encoder.left->value);
+      lf_set(right_disp, encoder.right->value);
+      lf_set(distance.right_angle, encoder.right->value);
+      lf_set(distance.left_angle, encoder.left->value);
+  =}
+
+  initial mode IDLE {
+      reaction(drive_mode, encoder.left, encoder.right, uid) -> Motor.left, Motor.right, Motor.left_speed, Motor.right_speed, reset(FORWARD), reset(BACKWARD), reset(TURNLEFT), reset(TURNRIGHT), notify {=
+          lf_set(notify, "IDLE");
+          lf_set(Motor.left, encoder.left->value);
+          lf_set(Motor.right, encoder.right->value);
+          lf_set(Motor.left_speed, 0.0f);
+          lf_set(Motor.right_speed, 0.0f);
+          if (self->current_uid == uid->value){
+            if (drive_mode->value == 'F') {
+                lf_set_mode(FORWARD);
+            } 
+            else if (drive_mode->value == 'B') {
+                lf_set_mode(BACKWARD);
+            } 
+            else if (drive_mode->value == 'L') {
+                lf_set_mode(TURNLEFT);
+            } 
+            else if (drive_mode->value == 'R') {
+                lf_set_mode(TURNRIGHT);
+            }
+          }
+      =}
+  }
+
+  mode FORWARD {
+      reaction(drive_distance, gyro.z, distance.left_distance, distance.right_distance, uid, encoder.left, encoder.right) -> Motor.left, Motor.right, Motor.left_speed, Motor.right_speed, notify, reset(IDLE) {=
+          lf_set(Motor.left, encoder.left->value);
+          lf_set(Motor.right, encoder.right->value);
+          lf_set(Motor.left_speed, 0.1f);
+          lf_set(Motor.right_speed, 0.1f);
+          lf_set(notify, "FORWARD");
+
+          self->A = gyro.z->value;
+          self->D = (distance.left_distance->value + distance.right_distance->value)/2.0;
+          if (self->D - self->D_prev >= drive_distance->value){
+              lf_set_mode(IDLE);
+              lf_set(notify, "IDLE");
+              self->D_prev = self->D;
+              self->A_prev = self->A;
+              self->current_uid++;
+          }
+          
+          if (self->current_uid < uid->value){
+              self->current_uid = uid->value;
+              lf_set_mode(IDLE);
+              lf_set(notify, "IDLE");
+          }
+      =}
+  }
+
+  mode BACKWARD {
+      reaction(drive_distance, gyro.z, distance.left_distance, distance.right_distance, uid, encoder.left, encoder.right) -> Motor.left, Motor.right, Motor.left_speed, Motor.right_speed, notify, reset(IDLE) {=
+          lf_set(Motor.left, encoder.left->value);
+          lf_set(Motor.right, encoder.right->value);
+          lf_set(Motor.left_speed, -0.1f);
+          lf_set(Motor.right_speed, -0.1f);
+          lf_set(notify, "BACKWARD");
+
+          self->A = gyro.z->value;
+          self->D = (distance.left_distance->value + distance.right_distance->value)/2.0;
+          if (self->D - self->D_prev <= -drive_distance->value){
+              lf_set_mode(IDLE);
+              lf_set(notify, "IDLE");
+              self->D_prev = self->D;
+              self->A_prev = self->A;
+              self->current_uid++;
+          }
+          
+          if (self->current_uid < uid->value){
+              self->current_uid = uid->value;
+              lf_set_mode(IDLE);
+              lf_set(notify, "IDLE");
+          }
+      =}
+  }
+
+  mode TURNLEFT {
+      reaction(drive_distance, gyro.z, uid, encoder.left, encoder.right) -> Motor.left, Motor.right, Motor.left_speed, Motor.right_speed, notify, reset(IDLE) {=
+          lf_set(Motor.left, encoder.left->value);
+          lf_set(Motor.right, encoder.right->value);
+          lf_set(Motor.left_speed, -0.1f);
+          lf_set(Motor.right_speed, 0.1f);
+          lf_set(notify, "TURNLEFT");
+
+          self->A = gyro.z->value;
+          if (self->A - self->A_prev >= drive_distance->value * 0.95){
+              lf_set_mode(IDLE);
+              lf_set(notify, "IDLE");
+              self->A_prev = self->A;
+              self->current_uid++;
+          }
+          
+          if (self->current_uid < uid->value){
+              self->current_uid = uid->value;
+              lf_set_mode(IDLE);
+              lf_set(notify, "IDLE");
+          }
+      =}
+  }
+
+  mode TURNRIGHT {
+      reaction(drive_distance, gyro.z, uid, encoder.left, encoder.right) -> Motor.left, Motor.right, Motor.left_speed, Motor.right_speed, notify, reset(IDLE) {=
+          lf_set(Motor.left, encoder.left->value);
+          lf_set(Motor.right, encoder.right->value);
+          lf_set(Motor.left_speed, 0.1f);
+          lf_set(Motor.right_speed, -0.1f);
+          lf_set(notify, "TURNRIGHT");
+
+          self->A = gyro.z->value;
+          if (self->A - self->A_prev <= -drive_distance->value){
+              lf_set_mode(IDLE);
+              lf_set(notify, "IDLE");
+              self->A_prev = self->A;
+              self->current_uid++;
+          }
+          
+          if (self->current_uid < uid->value){
+              self->current_uid = uid->value;
+              lf_set_mode(IDLE);
+              lf_set(notify, "IDLE");
+          }
+      =}
+  }
+}
+
+reactor UARTHandler {
+    timer check_timer(0, 100msec)         // 定时器，每 5 秒检查一次是否有数据
+    output notify: string              // 接收到的完整字符串数据
+    output received_command: char      // 最后一个接收到的命令
+    output received_command_d: float   // 最后一个接收到的数值输入
+    output uid: int32_t                    // 分配的唯一 UID
+
+    state stored_command: char = '\0'; // 存储的命令
+    state stored_value: float = 0.0;   // 存储的数值
+    state command_counter: int = 0;    // 计数器，唯一 UID
+
+    reaction(startup) {=
+        // 初始化 UART0，用于与蓝牙模块通信
+        uart_init(uart0, 9600);          // 设置波特率 9600
+        gpio_set_function(28, GPIO_FUNC_UART); // GPIO 28 为 TX
+        gpio_set_function(29, GPIO_FUNC_UART); // GPIO 29 为 RX
+        uart_set_fifo_enabled(uart0, true);    // 启用 FIFO
+        printf("UART initialized for receiving.\n");
+
+        // 初始化 USB 串口（调试用）
+        stdio_init_all();
+        printf("USB Serial initialized.\n");
+    =}
+
+    reaction(check_timer) -> notify, received_command, received_command_d, uid {=
+        char data[128]; // 缓冲区用于存储接收数据
+        size_t len = 0; // 实际读取的字节数
+
+        // 循环读取数据直到缓冲区满或无数据可读
+        while (uart_is_readable(uart0) && len < sizeof(data) - 1) {
+            data[len++] = uart_getc(uart0);
+        }
+        data[len] = '\0'; // 添加字符串结束符
+
+        if (len > 0) {
+            printf("Received data: %s\n", data); // 打印接收到的数据
+            lf_set(notify, data);               // 发送完整字符串
+
+            // 解析数据
+            char command;
+            float value;
+            if (sscanf(data, "%c %f", &command, &value) == 2) {
+                if (command == 'F' || command == 'B' || command == 'L' || command == 'R') {
+                    // 更新存储的命令和数值
+                    self->stored_command = command;
+                    self->stored_value = value;
+                    // 更新计数器
+                    self->command_counter++;
+                    printf("Updated command: %c, value: %.2f, UID: %d\n", command, value, self->command_counter);
+                } 
+            } 
+
+        lf_set(received_command, self->stored_command);
+        lf_set(received_command_d, self->stored_value);
+        lf_set(uid, self->command_counter);
+        }
+    =}
+}
+
+
+
+
+main reactor{
+    // 实例化 Reactor
+    uart = new UARTHandler()
+    Robot = new Robot()
+    display = new Display()
+    
+    // 将 UART 接收到的命令传递给控制逻辑
+    uart.received_command -> Robot.drive_mode;
+    uart.received_command_d -> Robot.drive_distance;
+    uart.uid -> Robot.uid;
+    Robot.notify -> display.line0;
+
+    reaction(uart.received_command_d, uart.received_command, uart.uid, Robot.out_angle) ->display.line1, display.line2, display.line3 {=
+        static char buf1[17];
+        static char buf2[17];
+        static char buf3[17];
+        snprintf(buf1, 17, "in_val: %.4f", uart.received_command_d->value);
+        snprintf(buf2, 17, "command: %.4f", Robot.out_angle->value);
+        snprintf(buf3, 17, "uid: %d", uart.uid->value);
+
+
+        lf_set(display.line2, buf1);
+        lf_set(display.line3, buf2);
+        lf_set(display.line1, buf3);
+    =}
+}
